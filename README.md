@@ -11,7 +11,7 @@ Longbow 2 was a Jane's Combat Simulations helicopter sim centered on the AH-64D 
 - TypeScript ES modules compiled with `tsc` for the browser.
 - No runtime framework; Canvas 2D rendering for terrain, units, LOS overlay, weapon cones, HUD, and minimap.
 - Pure domain layer under `src/domain` so simulation is unit-testable separately from Canvas presentation.
-- GitHub Pages deployment through `.github/workflows/pages.yml`.
+- GitHub Pages deployment through `.github/workflows/pages.yml`, which builds `dist/` and publishes that artifact on every push to `main`. In the repository settings, Pages should use **GitHub Actions** as the source, not `Deploy from a branch` / `main` / `/ (root)`.
 
 ## Commands
 
@@ -21,6 +21,18 @@ npm test
 npm run build
 npm run dev
 ```
+
+## GitHub Pages setup
+
+This project should be deployed by the CI workflow, not directly from the repository root. The source files in `src/` are TypeScript, while browsers load the compiled JavaScript emitted into `dist/` by `npm run build`.
+
+Set GitHub Pages to deploy from Actions:
+
+1. Open **Settings → Pages** in the GitHub repository.
+2. Under **Build and deployment → Source**, choose **GitHub Actions**.
+3. Push to `main`; `.github/workflows/pages.yml` will typecheck, test, build, smoke-test, upload `dist/`, and deploy it automatically.
+
+If Pages is left on **Deploy from a branch** with `main` and `/ (root)`, GitHub serves `index.html` from the source tree. That page references `./src/main.js`, but only `src/main.ts` exists before CI builds, so the result is the blank background-only page.
 
 ## Gameplay implemented
 
