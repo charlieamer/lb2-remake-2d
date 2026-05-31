@@ -13,6 +13,20 @@ export interface RenderAssets {
   readonly minimap: HTMLCanvasElement;
 }
 
+export interface ViewportSize {
+  readonly width: number;
+  readonly height: number;
+}
+
+const canvasCssSize = (canvas: HTMLCanvasElement): ViewportSize => {
+  const rect = canvas.getBoundingClientRect();
+  const dpr = typeof window === 'undefined' ? 1 : window.devicePixelRatio || 1;
+  return {
+    width: rect.width || canvas.width / dpr || canvas.width,
+    height: rect.height || canvas.height / dpr || canvas.height,
+  };
+};
+
 const teamColor = (unit: Unit, visible: boolean): string => {
   if (unit.team === 'blue') return '#3efc71';
   return visible ? '#ff3a2f' : '#7b3534';
@@ -39,15 +53,19 @@ export const createAssets = (state: BattleState): RenderAssets => {
   return { terrain, minimap };
 };
 
-export const worldToScreen = (point: Vec2, camera: Camera, canvas: HTMLCanvasElement): Vec2 => ({
-  x: canvas.width / 2 + (point.x - camera.center.x) / camera.metersPerPixel,
-  y: canvas.height / 2 + (point.y - camera.center.y) / camera.metersPerPixel,
+export const worldToScreenInViewport = (point: Vec2, camera: Camera, size: ViewportSize): Vec2 => ({
+  x: size.width / 2 + (point.x - camera.center.x) / camera.metersPerPixel,
+  y: size.height / 2 + (point.y - camera.center.y) / camera.metersPerPixel,
 });
 
-export const screenToWorld = (point: Vec2, camera: Camera, canvas: HTMLCanvasElement): Vec2 => ({
-  x: camera.center.x + (point.x - canvas.width / 2) * camera.metersPerPixel,
-  y: camera.center.y + (point.y - canvas.height / 2) * camera.metersPerPixel,
+export const screenToWorldInViewport = (point: Vec2, camera: Camera, size: ViewportSize): Vec2 => ({
+  x: camera.center.x + (point.x - size.width / 2) * camera.metersPerPixel,
+  y: camera.center.y + (point.y - size.height / 2) * camera.metersPerPixel,
 });
+
+export const worldToScreen = (point: Vec2, camera: Camera, canvas: HTMLCanvasElement): Vec2 => worldToScreenInViewport(point, camera, canvasCssSize(canvas));
+
+export const screenToWorld = (point: Vec2, camera: Camera, canvas: HTMLCanvasElement): Vec2 => screenToWorldInViewport(point, camera, canvasCssSize(canvas));
 
 const drawUnit = (ctx: CanvasRenderingContext2D, unit: Unit, screen: Vec2, visible: boolean): void => {
   ctx.save();
@@ -113,37 +131,38 @@ const drawWeaponCones = (ctx: CanvasRenderingContext2D, pilot: Unit, screen: Vec
   ctx.restore();
 };
 
-const drawGrid = (ctx: CanvasRenderingContext2D, camera: Camera, canvas: HTMLCanvasElement): void => {
+const drawGrid = (ctx: CanvasRenderingContext2D, camera: Camera, size: ViewportSize): void => {
   const spacingM = 1000;
   ctx.strokeStyle = 'rgba(231,255,210,0.10)';
   ctx.lineWidth = 1;
-  const left = camera.center.x - (canvas.width / 2) * camera.metersPerPixel;
-  const top = camera.center.y - (canvas.height / 2) * camera.metersPerPixel;
-  for (let x = Math.ceil(left / spacingM) * spacingM; x < left + canvas.width * camera.metersPerPixel; x += spacingM) {
+  const left = camera.center.x - (size.width / 2) * camera.metersPerPixel;
+  const top = camera.center.y - (size.height / 2) * camera.metersPerPixel;
+  for (let x = Math.ceil(left / spacingM) * spacingM; x < left + size.width * camera.metersPerPixel; x += spacingM) {
     const sx = (x - left) / camera.metersPerPixel;
     ctx.beginPath();
     ctx.moveTo(sx, 0);
-    ctx.lineTo(sx, canvas.height);
+    ctx.lineTo(sx, size.height);
     ctx.stroke();
   }
-  for (let y = Math.ceil(top / spacingM) * spacingM; y < top + canvas.height * camera.metersPerPixel; y += spacingM) {
+  for (let y = Math.ceil(top / spacingM) * spacingM; y < top + size.height * camera.metersPerPixel; y += spacingM) {
     const sy = (y - top) / camera.metersPerPixel;
     ctx.beginPath();
     ctx.moveTo(0, sy);
-    ctx.lineTo(canvas.width, sy);
+    ctx.lineTo(size.width, sy);
     ctx.stroke();
   }
 };
 
 export const renderBattle = (ctx: CanvasRenderingContext2D, state: BattleState, assets: RenderAssets, camera: Camera): void => {
   const canvas = ctx.canvas;
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  const sx = (camera.center.x - (canvas.width / 2) * camera.metersPerPixel) / state.mapSizeM * assets.terrain.width;
-  const sy = (camera.center.y - (canvas.height / 2) * camera.metersPerPixel) / state.mapSizeM * assets.terrain.height;
-  const sw = canvas.width * camera.metersPerPixel / state.mapSizeM * assets.terrain.width;
-  const sh = canvas.height * camera.metersPerPixel / state.mapSizeM * assets.terrain.height;
-  ctx.drawImage(assets.terrain, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
-  drawGrid(ctx, camera, canvas);
+  const size = canvasCssSize(canvas);
+  ctx.clearRect(0, 0, size.width, size.height);
+  const sx = (camera.center.x - (size.width / 2) * camera.metersPerPixel) / state.mapSizeM * assets.terrain.width;
+  const sy = (camera.center.y - (size.height / 2) * camera.metersPerPixel) / state.mapSizeM * assets.terrain.height;
+  const sw = size.width * camera.metersPerPixel / state.mapSizeM * assets.terrain.width;
+  const sh = size.height * camera.metersPerPixel / state.mapSizeM * assets.terrain.height;
+  ctx.drawImage(assets.terrain, sx, sy, sw, sh, 0, 0, size.width, size.height);
+  drawGrid(ctx, camera, size);
   const pilot = state.units.find((u) => u.id === state.selectedUnitId);
   if (pilot) {
     const cells = visibleCells(state, pilot, 42);
@@ -194,19 +213,20 @@ export const renderBattle = (ctx: CanvasRenderingContext2D, state: BattleState, 
 
 export const renderMinimap = (ctx: CanvasRenderingContext2D, state: BattleState, assets: RenderAssets): void => {
   const canvas = ctx.canvas;
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  ctx.drawImage(assets.minimap, 0, 0, canvas.width, canvas.height);
+  const size = canvasCssSize(canvas);
+  ctx.clearRect(0, 0, size.width, size.height);
+  ctx.drawImage(assets.minimap, 0, 0, size.width, size.height);
   for (const front of state.fronts) {
     ctx.strokeStyle = '#32ff62';
     ctx.beginPath();
-    ctx.moveTo((front.blueControlX / state.mapSizeM) * canvas.width, ((front.y - 4500) / state.mapSizeM) * canvas.height);
-    ctx.lineTo((front.blueControlX / state.mapSizeM) * canvas.width, ((front.y + 4500) / state.mapSizeM) * canvas.height);
+    ctx.moveTo((front.blueControlX / state.mapSizeM) * size.width, ((front.y - 4500) / state.mapSizeM) * size.height);
+    ctx.lineTo((front.blueControlX / state.mapSizeM) * size.width, ((front.y + 4500) / state.mapSizeM) * size.height);
     ctx.stroke();
   }
   for (const unit of state.units) {
     if (unit.team === 'red' && !unit.revealedToBlue) continue;
     ctx.fillStyle = teamColor(unit, unit.team === 'blue' || Boolean(unit.lastSeenAtS && state.timeS - unit.lastSeenAtS < 1));
-    ctx.fillRect((unit.position.x / state.mapSizeM) * canvas.width - 2, (unit.position.y / state.mapSizeM) * canvas.height - 2, 4, 4);
+    ctx.fillRect((unit.position.x / state.mapSizeM) * size.width - 2, (unit.position.y / state.mapSizeM) * size.height - 2, 4, 4);
   }
 };
 
