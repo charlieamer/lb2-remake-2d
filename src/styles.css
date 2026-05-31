@@ -7,19 +7,27 @@
 
 * { box-sizing: border-box; }
 body { margin: 0; min-height: 100vh; overflow: hidden; background: radial-gradient(circle at top, #243027, #07100c 70%); }
-button { border: 1px solid rgba(211, 255, 192, 0.24); border-radius: 14px; background: rgba(21, 42, 30, 0.88); color: #e5ffd7; font-weight: 800; letter-spacing: 0.04em; touch-action: manipulation; }
-button:active { transform: translateY(1px); background: rgba(58, 101, 70, 0.92); }
-.shell { width: min(100vw, 520px); height: 100dvh; margin: 0 auto; display: grid; grid-template-rows: auto auto 1fr auto; gap: 10px; padding: 12px; }
+button { border: 1px solid rgba(211, 255, 192, 0.24); border-radius: 14px; background: rgba(21, 42, 30, 0.62); color: #e5ffd7; font-weight: 800; letter-spacing: 0.04em; touch-action: manipulation; backdrop-filter: blur(7px); }
+button:active { transform: translateY(1px); background: rgba(58, 101, 70, 0.76); }
+.shell { width: min(100vw, 820px); height: 100dvh; margin: 0 auto; display: grid; grid-template-rows: auto auto 1fr; gap: 8px; padding: 10px; }
 .topbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-h1 { margin: 0; font-size: clamp(1.2rem, 5vw, 1.75rem); }
+h1 { margin: 0; font-size: clamp(1.1rem, 4vw, 1.75rem); }
 .eyebrow { margin: 0 0 4px; color: #9ebc94; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.09em; }
-.primary { padding: 12px 18px; background: #2e6f3c; box-shadow: 0 0 18px rgba(61, 255, 107, 0.18); }
-.briefing { border: 1px solid rgba(191, 255, 168, 0.18); border-radius: 16px; padding: 10px 12px; background: rgba(7, 16, 12, 0.72); color: #cbe8bd; font-size: 0.82rem; line-height: 1.35; }
+.primary { padding: 12px 18px; background: rgba(46, 111, 60, 0.9); box-shadow: 0 0 18px rgba(61, 255, 107, 0.18); }
+.briefing { border: 1px solid rgba(191, 255, 168, 0.18); border-radius: 16px; padding: 9px 12px; background: rgba(7, 16, 12, 0.72); color: #cbe8bd; font-size: 0.82rem; line-height: 1.35; }
 .game-frame { position: relative; min-height: 0; border: 1px solid rgba(224, 255, 210, 0.22); border-radius: 24px; overflow: hidden; box-shadow: inset 0 0 30px rgba(0, 0, 0, 0.35), 0 18px 70px rgba(0, 0, 0, 0.42); background: #172217; }
 #battle { width: 100%; height: 100%; display: block; touch-action: none; }
-#minimap { position: absolute; right: 12px; top: 12px; width: 132px; height: 132px; border: 2px solid rgba(229, 255, 215, 0.42); border-radius: 12px; background: #111; }
-.hud { position: absolute; left: 12px; right: 12px; bottom: 12px; display: grid; gap: 4px; padding: 10px 12px; border: 1px solid rgba(229, 255, 215, 0.16); border-radius: 16px; background: rgba(3, 8, 5, 0.68); backdrop-filter: blur(6px); color: #eaffdc; font-size: 0.78rem; text-shadow: 0 1px 1px #000; }
-.controls { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
-.controls button { min-height: 48px; font-size: 0.88rem; }
-.controls .danger, #missile { background: #783129; }
-@media (min-height: 760px) { .controls button { min-height: 58px; } }
+#minimap { position: absolute; right: 12px; top: 12px; width: 142px; height: 142px; border: 2px solid rgba(229, 255, 215, 0.42); border-radius: 12px; background: #111; opacity: 0.92; }
+.hud { position: absolute; left: 12px; right: 12px; top: 12px; width: min(430px, calc(100% - 178px)); display: grid; gap: 4px; padding: 10px 12px; border: 1px solid rgba(229, 255, 215, 0.16); border-radius: 16px; background: rgba(3, 8, 5, 0.58); backdrop-filter: blur(6px); color: #eaffdc; font-size: 0.78rem; text-shadow: 0 1px 1px #000; pointer-events: none; }
+.pilot-health { display: grid; grid-template-columns: auto 1fr auto; gap: 8px; align-items: center; }
+meter { width: 100%; height: 12px; accent-color: #69ff78; }
+.controls { position: absolute; inset: auto 12px 12px 12px; z-index: 3; pointer-events: none; display: grid; grid-template-columns: 1fr 1fr; align-items: end; gap: 12px; }
+.controls::before, .controls::after { content: ''; display: block; }
+.controls button { pointer-events: auto; min-height: 44px; min-width: 58px; padding: 9px 10px; font-size: 0.78rem; opacity: 0.74; }
+.controls button:hover { opacity: 0.95; }
+.controls [data-hold="turnLeft"], .controls [data-hold="strafeLeft"], .controls [data-hold="back"], .controls [data-hold="down"] { justify-self: start; }
+.controls [data-hold="turnRight"], .controls [data-hold="strafeRight"], .controls [data-hold="forward"], .controls [data-hold="up"], .controls #cannon, .controls #missile { justify-self: end; }
+.controls .danger, #missile { background: rgba(120, 49, 41, 0.74); }
+.controls[hidden] { display: none; }
+.game-frame.planning #minimap { opacity: 0.55; }
+@media (max-width: 560px) { .hud { top: auto; bottom: 12px; width: calc(100% - 24px); } .controls button { min-height: 42px; min-width: 52px; } }

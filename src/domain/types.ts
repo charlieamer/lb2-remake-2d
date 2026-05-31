@@ -20,7 +20,10 @@ export interface UnitStats {
   readonly sightRangeM: number;
   readonly cannonRangeM: number;
   readonly missileRangeM: number;
+  readonly accelerationMps2: number;
+  readonly decelerationMps2: number;
 }
+
 
 export interface Unit {
   readonly id: string;
@@ -32,6 +35,7 @@ export interface Unit {
   turretRad: number;
   health: number;
   missiles: number;
+  velocityMps: Vec2;
   autopilotTarget?: Vec2;
   lastSeenAtS?: number;
   revealedToBlue: boolean;
@@ -46,6 +50,16 @@ export interface Projectile {
   position: Vec2;
   ttlS: number;
   damage: number;
+  speedMps: number;
+}
+
+export interface Tracer {
+  readonly id: string;
+  readonly team: Team;
+  readonly shooterId: string;
+  start: Vec2;
+  end: Vec2;
+  ttlS: number;
 }
 
 export interface FrontSegment {
@@ -62,11 +76,14 @@ export interface BattleState {
   terrain: TerrainMap;
   units: Unit[];
   projectiles: Projectile[];
+  tracers: Tracer[];
   fronts: FrontSegment[];
   blueTerritoryRatio: number;
   status: 'planning' | 'flying' | 'blueVictory' | 'redVictory';
   message: string;
+  defeatReason?: string;
 }
+
 
 export interface TerrainSample {
   readonly heightM: number;

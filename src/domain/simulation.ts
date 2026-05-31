@@ -1,15 +1,27 @@
 import { add, angleTo, clamp, distance, fromAngle, normalizeAngle, rotateToward, scale } from './math.js';
 import { createTerrain, WORLD_SIZE_M } from './terrain.js';
-import type { BattleState, FrontSegment, PilotInput, Projectile, Team, Unit, UnitKind, UnitStats, Vec2, WeaponKind } from './types.js';
+import type { BattleState, FrontSegment, PilotInput, Projectile, Team, Tracer, Unit, UnitKind, UnitStats, Vec2, WeaponKind } from './types.js';
 
 export const UNIT_STATS: Record<UnitKind, UnitStats> = {
-  helicopter: { maxHealth: 120, maxSpeedMps: 95, reverseSpeedMps: 28, strafeSpeedMps: 42, turnRateRad: 1.65, turretTurnRateRad: 2.5, minAltitudeM: 25, maxAltitudeM: 900, climbRateMps: 12, sightRangeM: 7_200, cannonRangeM: 1_800, missileRangeM: 5_400 },
-  aaa: { maxHealth: 90, maxSpeedMps: 0, reverseSpeedMps: 0, strafeSpeedMps: 0, turnRateRad: 0, turretTurnRateRad: 1.2, minAltitudeM: 0, maxAltitudeM: 0, climbRateMps: 0, sightRangeM: 6_300, cannonRangeM: 2_300, missileRangeM: 4_800 },
-  tank: { maxHealth: 110, maxSpeedMps: 12, reverseSpeedMps: 5, strafeSpeedMps: 0, turnRateRad: 0.52, turretTurnRateRad: 0.8, minAltitudeM: 0, maxAltitudeM: 0, climbRateMps: 0, sightRangeM: 3_600, cannonRangeM: 2_800, missileRangeM: 0 },
+  // AH-64D-ish: 145 kt dash, 0.27 g level turn, moderate 5 m/s² translational acceleration.
+  helicopter: { maxHealth: 120, maxSpeedMps: 75, reverseSpeedMps: 22, strafeSpeedMps: 24, turnRateRad: 0.58, turretTurnRateRad: 2.7, minAltitudeM: 18, maxAltitudeM: 1200, climbRateMps: 10, sightRangeM: 7_200, cannonRangeM: 1_800, missileRangeM: 5_400, accelerationMps2: 5.0, decelerationMps2: 6.5 },
+  // Tracked / towed air-defense turret slew values are intentionally slower than the helicopter TADS.
+  aaa: { maxHealth: 90, maxSpeedMps: 0, reverseSpeedMps: 0, strafeSpeedMps: 0, turnRateRad: 0, turretTurnRateRad: 0.9, minAltitudeM: 0, maxAltitudeM: 0, climbRateMps: 0, sightRangeM: 6_300, cannonRangeM: 2_300, missileRangeM: 4_800, accelerationMps2: 0, decelerationMps2: 0 },
+  // Main battle tank cross-country pace and hull/turret rates are conservative rather than arcade-fast.
+  tank: { maxHealth: 110, maxSpeedMps: 11, reverseSpeedMps: 4, strafeSpeedMps: 0, turnRateRad: 0.35, turretTurnRateRad: 0.45, minAltitudeM: 0, maxAltitudeM: 0, climbRateMps: 0, sightRangeM: 3_600, cannonRangeM: 2_800, missileRangeM: 0, accelerationMps2: 1.8, decelerationMps2: 2.6 },
 };
 
+export const SPOTTING_GRID = 420;
+
 let projectileCounter = 0;
+let tracerCounter = 0;
 const deg = (v: number): number => (v / 180) * Math.PI;
+const length = (v: Vec2): number => Math.hypot(v.x, v.y);
+
+const approach = (current: number, target: number, delta: number): number => {
+  if (Math.abs(target - current) <= delta) return target;
+  return current + Math.sign(target - current) * delta;
+};
 
 export const createUnit = (id: string, kind: UnitKind, team: Team, position: Vec2, headingRad = 0): Unit => ({
   id,
@@ -21,6 +33,7 @@ export const createUnit = (id: string, kind: UnitKind, team: Team, position: Vec
   turretRad: headingRad,
   health: UNIT_STATS[kind].maxHealth,
   missiles: kind === 'tank' ? 0 : kind === 'helicopter' ? 8 : 4,
+  velocityMps: { x: 0, y: 0 },
   revealedToBlue: team === 'blue',
 });
 
@@ -50,13 +63,14 @@ export const createInitialBattle = (): BattleState => {
       createUnit('red-tank-4', 'tank', 'red', { x: 38_000, y: 41_000 }, Math.PI),
     ],
     projectiles: [],
+    tracers: [],
     blueTerritoryRatio: 0.46,
     status: 'planning',
-    message: 'Mission planner: choose ingress points, then tap FLY.',
+    message: 'Mission planner: drag/zoom the AO, choose ingress points, then tap FLY.',
   };
 };
 
-const isAlive = (u: Unit): boolean => u.health > 0;
+export const isAlive = (u: Unit): boolean => u.health > 0;
 
 export const hasLineOfSight = (state: BattleState, observer: Unit, target: Unit): boolean => {
   const d = distance(observer.position, target.position);
@@ -65,7 +79,7 @@ export const hasLineOfSight = (state: BattleState, observer: Unit, target: Unit)
   const targetGround = state.terrain.sample(target.position.x, target.position.y).heightM;
   const observerEye = observerGround + observer.altitudeM + (observer.kind === 'helicopter' ? 10 : 3);
   const targetEye = targetGround + target.altitudeM + (target.kind === 'helicopter' ? 10 : 3);
-  const steps = Math.max(8, Math.ceil(d / 550));
+  const steps = Math.max(6, Math.ceil(d / 800));
   for (let i = 1; i < steps; i += 1) {
     const t = i / steps;
     const x = observer.position.x + (target.position.x - observer.position.x) * t;
@@ -77,41 +91,50 @@ export const hasLineOfSight = (state: BattleState, observer: Unit, target: Unit)
   return true;
 };
 
-export const visibleCells = (state: BattleState, observer: Unit, grid = 64): Uint8Array => {
+export const visibleCells = (state: BattleState, observer: Unit, grid = SPOTTING_GRID): Uint8Array => {
   const cells = new Uint8Array(grid * grid);
   const cellSize = state.mapSizeM / grid;
+  const maxRange = UNIT_STATS[observer.kind].sightRangeM;
   for (let y = 0; y < grid; y += 1) {
     for (let x = 0; x < grid; x += 1) {
       const probe = createUnit('probe', 'tank', 'red', { x: (x + 0.5) * cellSize, y: (y + 0.5) * cellSize });
-      probe.altitudeM = 0;
-      cells[y * grid + x] = hasLineOfSight(state, observer, probe) ? 1 : 0;
+      if (distance(observer.position, probe.position) <= maxRange) cells[y * grid + x] = hasLineOfSight(state, observer, probe) ? 1 : 0;
     }
   }
   return cells;
 };
 
-const acquireTarget = (state: BattleState, shooter: Unit, weapon: WeaponKind): Unit | undefined => {
+export const acquireTarget = (state: BattleState, shooter: Unit, weapon: WeaponKind): Unit | undefined => {
   const stats = UNIT_STATS[shooter.kind];
   const range = weapon === 'missile' ? stats.missileRangeM : stats.cannonRangeM;
-  const cone = shooter.kind === 'helicopter' && weapon === 'missile' ? deg(20) : weapon === 'cannon' && shooter.kind === 'helicopter' ? deg(90) : Math.PI;
+  const cone = shooter.kind === 'helicopter' && weapon === 'missile' ? deg(24) : weapon === 'cannon' && shooter.kind === 'helicopter' ? deg(90) : Math.PI;
   return state.units
     .filter((u) => isAlive(u) && u.team !== shooter.team && distance(shooter.position, u.position) <= range && hasLineOfSight(state, shooter, u))
     .filter((u) => Math.abs(normalizeAngle(angleTo(shooter.position, u.position) - (weapon === 'cannon' ? shooter.turretRad : shooter.headingRad))) <= cone)
     .sort((a, b) => distance(shooter.position, a.position) - distance(shooter.position, b.position))[0];
 };
 
+export const lockedTargetFor = (state: BattleState, shooter: Unit): Unit | undefined => acquireTarget(state, shooter, 'missile') ?? acquireTarget(state, shooter, 'cannon');
+
+const addTracer = (state: BattleState, shooter: Unit, target: Unit): void => {
+  const aim = angleTo(shooter.position, target.position);
+  const reach = Math.min(UNIT_STATS[shooter.kind].cannonRangeM, distance(shooter.position, target.position));
+  state.tracers.push({ id: `t-${tracerCounter++}`, team: shooter.team, shooterId: shooter.id, start: shooter.position, end: add(shooter.position, scale(fromAngle(aim), reach)), ttlS: 0.18 });
+};
+
 const fireAt = (state: BattleState, shooter: Unit, weapon: WeaponKind): void => {
   const target = acquireTarget(state, shooter, weapon);
   if (!target) return;
   if (weapon === 'missile') {
-    if (shooter.missiles <= 0) return;
+    if (shooter.missiles <= 0 || state.projectiles.some((p) => p.shooterId === shooter.id && p.targetId === target.id)) return;
     shooter.missiles -= 1;
-    state.projectiles.push({ id: `m-${projectileCounter++}`, weapon, team: shooter.team, shooterId: shooter.id, targetId: target.id, position: shooter.position, ttlS: Math.max(2.4, distance(shooter.position, target.position) / 480), damage: 70 });
+    state.projectiles.push({ id: `m-${projectileCounter++}`, weapon, team: shooter.team, shooterId: shooter.id, targetId: target.id, position: { ...shooter.position }, ttlS: 14, damage: 70, speedMps: shooter.kind === 'helicopter' ? 475 : 360 });
   } else {
+    addTracer(state, shooter, target);
     const d = distance(shooter.position, target.position);
-    const hitChance = clamp(0.92 - d / 4_600, 0.25, 0.88);
+    const hitChance = clamp(0.86 - d / 4_800, 0.18, 0.82);
     const deterministicRoll = (Math.sin(state.timeS * 13.7 + d * 0.021 + shooter.id.length) + 1) / 2;
-    if (deterministicRoll <= hitChance) target.health -= shooter.kind === 'tank' ? 26 : 18;
+    if (deterministicRoll <= hitChance) target.health -= shooter.kind === 'tank' ? 28 : 16;
   }
 };
 
@@ -121,31 +144,44 @@ const moveUnit = (state: BattleState, unit: Unit, input: PilotInput | undefined,
   if (unit.kind === 'helicopter') {
     const manual = Boolean(input && (Math.abs(input.forward) + Math.abs(input.strafe) + Math.abs(input.turn) > 0.04));
     if (manual) delete unit.autopilotTarget;
-    const speedPenalty = input ? Math.abs(input.forward) * 0.45 : 0;
-    unit.headingRad += (input?.turn ?? 0) * stats.turnRateRad * (1 - speedPenalty) * dtS;
-    let forward = (input?.forward ?? 0) * (input && input.forward < 0 ? stats.reverseSpeedMps : stats.maxSpeedMps);
-    let strafe = (input?.strafe ?? 0) * stats.strafeSpeedMps;
+    const currentSpeed = length(unit.velocityMps);
+    const speedFactor = clamp(1 - currentSpeed / Math.max(1, stats.maxSpeedMps), 0.35, 1);
+    unit.headingRad += (input?.turn ?? 0) * stats.turnRateRad * speedFactor * dtS;
+    let desiredForward = (input?.forward ?? 0) * (input && input.forward < 0 ? stats.reverseSpeedMps : stats.maxSpeedMps);
+    let desiredStrafe = (input?.strafe ?? 0) * stats.strafeSpeedMps;
     if (unit.autopilotTarget) {
       const desired = angleTo(unit.position, unit.autopilotTarget);
-      unit.headingRad = rotateToward(unit.headingRad, desired, stats.turnRateRad * 0.72 * dtS);
-      forward = stats.maxSpeedMps * clamp(distance(unit.position, unit.autopilotTarget) / 900, 0, 1);
-      strafe = 0;
+      unit.headingRad = rotateToward(unit.headingRad, desired, stats.turnRateRad * 0.75 * dtS);
+      desiredForward = stats.maxSpeedMps * clamp(distance(unit.position, unit.autopilotTarget) / 900, 0, 1);
+      desiredStrafe = 0;
       if (distance(unit.position, unit.autopilotTarget) < 120) delete unit.autopilotTarget;
     }
-    unit.position = add(unit.position, add(scale(fromAngle(unit.headingRad), forward * dtS), scale(fromAngle(unit.headingRad + Math.PI / 2), strafe * dtS)));
+    const desiredVelocity = add(scale(fromAngle(unit.headingRad), desiredForward), scale(fromAngle(unit.headingRad + Math.PI / 2), desiredStrafe));
+    const desiredSpeed = length(desiredVelocity);
+    const currentHeadingSpeed = length(unit.velocityMps);
+    const rate = desiredSpeed > currentHeadingSpeed ? stats.accelerationMps2 : stats.decelerationMps2;
+    const deltaVelocity = { x: desiredVelocity.x - unit.velocityMps.x, y: desiredVelocity.y - unit.velocityMps.y };
+    const deltaSpeed = length(deltaVelocity);
+    const maxDelta = rate * dtS;
+    unit.velocityMps = deltaSpeed <= maxDelta || deltaSpeed === 0
+      ? desiredVelocity
+      : { x: unit.velocityMps.x + (deltaVelocity.x / deltaSpeed) * maxDelta, y: unit.velocityMps.y + (deltaVelocity.y / deltaSpeed) * maxDelta };
+    unit.position = add(unit.position, scale(unit.velocityMps, dtS));
     unit.altitudeM = clamp(unit.altitudeM + (input?.climb ?? 0) * stats.climbRateMps * dtS, stats.minAltitudeM, stats.maxAltitudeM);
-    const target = acquireTarget(state, unit, 'cannon');
+    const target = lockedTargetFor(state, unit);
     if (target) unit.turretRad = rotateToward(unit.turretRad, angleTo(unit.position, target.position), stats.turretTurnRateRad * dtS);
   } else if (unit.kind === 'tank') {
     const front = nearestFront(state.fronts, unit.position.y);
     const dir = unit.team === 'blue' ? 1 : -1;
     const objectiveX = front.blueControlX + dir * 2500;
     unit.headingRad = rotateToward(unit.headingRad, objectiveX > unit.position.x ? 0 : Math.PI, stats.turnRateRad * dtS);
-    unit.position = add(unit.position, scale(fromAngle(unit.headingRad), stats.maxSpeedMps * dtS));
+    unit.velocityMps = scale(fromAngle(unit.headingRad), approach(length(unit.velocityMps), stats.maxSpeedMps, stats.accelerationMps2 * dtS));
+    unit.position = add(unit.position, scale(unit.velocityMps, dtS));
     const target = acquireTarget(state, unit, 'cannon');
     if (target) unit.turretRad = rotateToward(unit.turretRad, angleTo(unit.position, target.position), stats.turretTurnRateRad * dtS);
   } else {
-    const target = acquireTarget(state, unit, 'missile') ?? acquireTarget(state, unit, 'cannon');
+    unit.velocityMps = { x: 0, y: 0 };
+    const target = lockedTargetFor(state, unit);
     if (target) unit.turretRad = rotateToward(unit.turretRad, angleTo(unit.position, target.position), stats.turretTurnRateRad * dtS);
   }
   unit.position = { x: clamp(unit.position.x, 0, state.mapSizeM), y: clamp(unit.position.y, 0, state.mapSizeM) };
@@ -162,22 +198,30 @@ const updateFronts = (state: BattleState, dtS: number): void => {
   }
   state.blueTerritoryRatio = state.fronts.reduce((sum, f) => sum + f.blueControlX / state.mapSizeM, 0) / state.fronts.length;
   if (state.blueTerritoryRatio >= 0.75) state.status = 'blueVictory';
-  if (state.blueTerritoryRatio <= 0.25) state.status = 'redVictory';
+  if (state.blueTerritoryRatio <= 0.25) {
+    state.status = 'redVictory';
+    state.defeatReason = 'Front collapsed: blue controls less than 25% of the sector.';
+  }
 };
 
 const updateProjectiles = (state: BattleState, dtS: number): void => {
   for (const p of state.projectiles) {
     const target = state.units.find((u) => u.id === p.targetId && isAlive(u));
-    if (!target) {
-      p.ttlS = 0;
-      continue;
-    }
+    if (!target) { p.ttlS = 0; continue; }
     p.ttlS -= dtS;
-    p.position = target.position;
-    const shooter = state.units.find((u) => u.id === p.shooterId);
-    if (p.ttlS <= 0 && shooter && hasLineOfSight(state, shooter, target) && distance(shooter.position, target.position) >= 500) target.health -= p.damage;
+    const d = distance(p.position, target.position);
+    const travel = p.speedMps * dtS;
+    if (d <= travel) {
+      const shooter = state.units.find((u) => u.id === p.shooterId);
+      if (shooter && hasLineOfSight(state, shooter, target) && distance(shooter.position, target.position) >= 500) target.health -= p.damage;
+      p.ttlS = 0;
+    } else {
+      p.position = add(p.position, scale(fromAngle(angleTo(p.position, target.position)), travel));
+    }
   }
   state.projectiles = state.projectiles.filter((p) => p.ttlS > 0);
+  for (const tracer of state.tracers) tracer.ttlS -= dtS;
+  state.tracers = state.tracers.filter((t) => t.ttlS > 0);
 };
 
 export const stepBattle = (state: BattleState, dtS: number, input?: PilotInput): BattleState => {
@@ -195,19 +239,20 @@ export const stepBattle = (state: BattleState, dtS: number, input?: PilotInput):
       }
     }
   }
-  for (const unit of state.units.filter((u) => isAlive(u) && u.team === 'red')) {
-    fireAt(state, unit, unit.kind === 'tank' ? 'cannon' : unit.missiles > 0 ? 'missile' : 'cannon');
-  }
+  for (const unit of state.units.filter((u) => isAlive(u) && u.team === 'red')) fireAt(state, unit, unit.kind === 'tank' ? 'cannon' : unit.missiles > 0 ? 'missile' : 'cannon');
   updateProjectiles(state, dtS);
   state.units = state.units.filter((u) => u.health > -40);
   updateFronts(state, dtS);
   const selected = state.units.find((u) => u.id === state.selectedUnitId);
-  if (!selected || selected.health <= 0) state.status = 'redVictory';
+  if (!selected || selected.health <= 0) {
+    state.status = 'redVictory';
+    state.defeatReason = 'Aircraft destroyed: your helicopter health reached zero.';
+  }
   const messages: Record<BattleState['status'], string> = {
-    planning: 'Mission planner: choose ingress points, then tap FLY.',
+    planning: 'Mission planner: drag/zoom the AO, choose ingress points, then tap FLY.',
     flying: 'Fly nap-of-earth, expose targets, and support the focus front.',
     blueVictory: 'Blue controls 75% of the sector. Victory!',
-    redVictory: 'Aircraft lost or front collapsed.',
+    redVictory: state.defeatReason ?? 'Defeat: mission failed.',
   };
   state.message = messages[state.status];
   return state;

@@ -1,4 +1,4 @@
-import { createInitialBattle, stepBattle } from './domain/simulation.js';
+import { createInitialBattle, lockedTargetFor, stepBattle } from './domain/simulation.js';
 import type { PilotInput, Vec2 } from './domain/types.js';
 import { cameraForState, createAssets, renderBattle, renderMinimap, screenToWorld } from './presentation/renderer.js';
 
@@ -17,12 +17,12 @@ app.innerHTML = `
     <div class="briefing" id="briefing">
       <strong>Planner:</strong> Review the full 50×50 km AO, front lines, FARPs, river valleys, forests, and enemy threats. Tap the map to set an ingress waypoint; tap <b>FLY</b> to enter the live battle.
     </div>
-    <div class="game-frame">
+    <div class="game-frame planning" id="gameFrame">
       <canvas id="battle" aria-label="battle map"></canvas>
       <canvas id="minimap" aria-label="minimap"></canvas>
       <div class="hud" id="hud"></div>
     </div>
-    <nav class="controls" aria-label="flight controls">
+    <nav class="controls" id="controls" aria-label="flight controls">
       <button data-hold="turnLeft">↺</button>
       <button data-hold="forward">▲</button>
       <button data-hold="turnRight">↻</button>
@@ -40,11 +40,13 @@ app.innerHTML = `
 const battleCanvas = document.querySelector<HTMLCanvasElement>('#battle');
 const minimapCanvas = document.querySelector<HTMLCanvasElement>('#minimap');
 const modeButton = document.querySelector<HTMLButtonElement>('#modeButton');
+const gameFrame = document.querySelector<HTMLDivElement>('#gameFrame');
+const controls = document.querySelector<HTMLElement>('#controls');
 const hud = document.querySelector<HTMLDivElement>('#hud');
 const briefing = document.querySelector<HTMLDivElement>('#briefing');
 const cannonButton = document.querySelector<HTMLButtonElement>('#cannon');
 const missileButton = document.querySelector<HTMLButtonElement>('#missile');
-if (!battleCanvas || !minimapCanvas || !modeButton || !hud || !briefing || !cannonButton || !missileButton) throw new Error('UI wiring failed');
+if (!battleCanvas || !minimapCanvas || !modeButton || !gameFrame || !controls || !hud || !briefing || !cannonButton || !missileButton) throw new Error('UI wiring failed');
 
 const state = createInitialBattle();
 const assets = createAssets(state);
@@ -56,6 +58,9 @@ const held = new Set<string>();
 let fireCannon = false;
 let fireMissile = false;
 let pendingWaypoint: Vec2 | undefined;
+let plannerCamera = cameraForState(state, { width: 500, height: 500 });
+let draggingPlanner = false;
+let lastPointer: Vec2 | undefined;
 let last = performance.now();
 
 const resize = (): void => {
@@ -71,15 +76,52 @@ const resize = (): void => {
 window.addEventListener('resize', resize);
 resize();
 
+const canvasViewport = (): { width: number; height: number } => {
+  const rect = battleCanvas.getBoundingClientRect();
+  return { width: rect.width, height: rect.height };
+};
+
 const pointerPosition = (event: PointerEvent): Vec2 => {
   const rect = battleCanvas.getBoundingClientRect();
   return { x: event.clientX - rect.left, y: event.clientY - rect.top };
 };
 
 battleCanvas.addEventListener('pointerdown', (event) => {
-  const camera = cameraForState(state);
+  const point = pointerPosition(event);
+  if (state.status === 'planning') {
+    draggingPlanner = true;
+    lastPointer = point;
+    battleCanvas.setPointerCapture(event.pointerId);
+    return;
+  }
+  const camera = cameraForState(state, canvasViewport());
+  pendingWaypoint = screenToWorld(point, camera, battleCanvas);
+});
+
+battleCanvas.addEventListener('pointermove', (event) => {
+  if (!draggingPlanner || state.status !== 'planning' || !lastPointer) return;
+  const point = pointerPosition(event);
+  const dx = point.x - lastPointer.x;
+  const dy = point.y - lastPointer.y;
+  plannerCamera = { ...plannerCamera, center: { x: plannerCamera.center.x - dx * plannerCamera.metersPerPixel, y: plannerCamera.center.y - dy * plannerCamera.metersPerPixel } };
+  lastPointer = point;
+});
+
+battleCanvas.addEventListener('pointerup', (event) => {
+  if (!draggingPlanner || state.status !== 'planning') return;
+  draggingPlanner = false;
+  lastPointer = undefined;
+  const camera = cameraForState(state, canvasViewport(), plannerCamera);
   pendingWaypoint = screenToWorld(pointerPosition(event), camera, battleCanvas);
 });
+
+battleCanvas.addEventListener('pointercancel', () => { draggingPlanner = false; lastPointer = undefined; });
+battleCanvas.addEventListener('wheel', (event) => {
+  if (state.status !== 'planning') return;
+  event.preventDefault();
+  const factor = event.deltaY > 0 ? 1.16 : 0.86;
+  plannerCamera = { ...plannerCamera, metersPerPixel: Math.max(35, Math.min(130, plannerCamera.metersPerPixel * factor)) };
+}, { passive: false });
 
 for (const button of document.querySelectorAll<HTMLButtonElement>('[data-hold]')) {
   const key = button.dataset.hold;
@@ -96,6 +138,8 @@ modeButton.addEventListener('click', () => {
     state.status = 'flying';
     modeButton.textContent = 'RESET';
     briefing.hidden = true;
+    gameFrame.classList.remove('planning');
+    controls.hidden = false;
   } else {
     location.reload();
   }
@@ -121,18 +165,27 @@ const buildInput = (): PilotInput => {
 const updateHud = (): void => {
   const pilot = state.units.find((u) => u.id === state.selectedUnitId);
   const redAlive = state.units.filter((u) => u.team === 'red' && u.health > 0).length;
-  hud.innerHTML = pilot ? `
+  gameFrame.classList.toggle('planning', state.status === 'planning');
+  controls.hidden = state.status === 'planning';
+  if (!pilot) { hud.innerHTML = `<div>${state.message}</div>`; return; }
+  const ground = state.terrain.sample(pilot.position.x, pilot.position.y).heightM;
+  const asl = ground + pilot.altitudeM;
+  const speed = Math.hypot(pilot.velocityMps.x, pilot.velocityMps.y);
+  const heading = Math.round((((pilot.headingRad * 180) / Math.PI) % 360 + 360) % 360);
+  const lock = lockedTargetFor(state, pilot);
+  hud.innerHTML = `
     <div><b>${state.status.toUpperCase()}</b> ${state.message}</div>
-    <div>ALT ${Math.round(pilot.altitudeM)} m · HP ${Math.max(0, Math.round(pilot.health))} · AGM ${pilot.missiles}</div>
-    <div>Blue territory ${(state.blueTerritoryRatio * 100).toFixed(1)}% · Enemy contacts ${redAlive}</div>
-  ` : `<div>${state.message}</div>`;
+    <div class="pilot-health"><span>MY HP</span><meter min="0" max="${120}" value="${Math.max(0, Math.round(pilot.health))}"></meter><span>${Math.max(0, Math.round(pilot.health))}</span></div>
+    <div>AGL ${Math.round(pilot.altitudeM)} m · ASL ${Math.round(asl)} m · SPD ${Math.round(speed)} m/s · HDG ${heading}°</div>
+    <div>LOCK ${lock ? lock.id : 'none'} · AGM ${pilot.missiles} · Blue territory ${(state.blueTerritoryRatio * 100).toFixed(1)}% · Enemy contacts ${redAlive}</div>
+  `;
 };
 
 const frame = (now: number): void => {
   const dt = Math.min(0.05, (now - last) / 1000);
   last = now;
   if (state.status === 'flying') stepBattle(state, dt, buildInput());
-  const camera = cameraForState(state);
+  const camera = cameraForState(state, canvasViewport(), plannerCamera);
   renderBattle(battleCtx, state, assets, camera);
   renderMinimap(minimapCtx, state, assets);
   updateHud();
