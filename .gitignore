@@ -3,3 +3,6 @@ dist/
 .tmp-tests/
 *.tsbuildinfo
 .DS_Store
+
+test-results/
+playwright-report/

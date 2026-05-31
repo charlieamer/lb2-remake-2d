@@ -41,5 +41,16 @@ test('autopilot advances the helicopter toward a clicked waypoint', () => {
   for (let i = 0; i < 80; i += 1) {
     stepBattle(state, 0.05, { forward: 0, strafe: 0, turn: 0, climb: 0, fireCannon: false, fireMissile: false, setAutopilotTarget: { x: startX + 2000, y: pilot.position.y } });
   }
-  assert.ok(pilot.position.x > startX + 100);
+  assert.ok(pilot.position.x > startX + 30);
+});
+
+test('helicopter acceleration ramps instead of jumping to maximum speed', () => {
+  const state = createInitialBattle();
+  state.status = 'flying';
+  const pilot = state.units.find((u) => u.id === state.selectedUnitId);
+  assert.ok(pilot);
+  stepBattle(state, 0.5, { forward: 1, strafe: 0, turn: 0, climb: 0, fireCannon: false, fireMissile: false });
+  const speed = Math.hypot(pilot.velocityMps.x, pilot.velocityMps.y);
+  assert.ok(speed > 0);
+  assert.ok(speed < UNIT_STATS.helicopter.maxSpeedMps / 3);
 });
