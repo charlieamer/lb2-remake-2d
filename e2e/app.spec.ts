@@ -20,7 +20,7 @@ test('GitHub Pages build loads useful game UI without browser errors', async ({ 
   await expect(page).toHaveTitle('Longbow 2D Tactical');
   await expect(page.getByRole('heading', { name: 'Longbow 2D Tactical' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'FLY' })).toBeVisible();
-  await expect(page.getByText('Planner:')).toBeVisible();
+  await expect(page.getByText('Planner:', { exact: true })).toBeVisible();
   await expect(page.getByLabel('flight controls')).toBeVisible();
 
   const battleCanvas = page.getByLabel('battle map');
