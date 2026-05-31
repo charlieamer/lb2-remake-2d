@@ -7,9 +7,11 @@
     "dev": "npm run build && node scripts/dev-server.mjs",
     "build": "node scripts/build.mjs",
     "test": "tsc -p tsconfig.test.json && node --test .tmp-tests/**/*.test.js",
-    "typecheck": "tsc -p tsconfig.app.json --noEmit"
+    "typecheck": "tsc -p tsconfig.app.json --noEmit",
+    "test:e2e": "playwright test"
   },
   "devDependencies": {
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "@playwright/test": "^1.56.1"
   }
 }
