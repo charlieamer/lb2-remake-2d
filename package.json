@@ -1,0 +1,15 @@
+{
+  "name": "lb2-remake-2d",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "npm run build && node scripts/dev-server.mjs",
+    "build": "node scripts/build.mjs",
+    "test": "tsc -p tsconfig.test.json && node --test .tmp-tests/**/*.test.js",
+    "typecheck": "tsc -p tsconfig.app.json --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  }
+}
